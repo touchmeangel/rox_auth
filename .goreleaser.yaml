@@ -1,0 +1,37 @@
+project_name: rox_auth
+
+builds:
+  - id: rox_auth
+    main: ./cmd/rox_auth
+    binary: rox_auth
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: rox_auth
+    ids: [rox_auth]
+    formats: [tar.gz]
+    name_template: "rox_auth_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+release:
+  github:
+    owner: touchmeangel
+    name: rox_auth
