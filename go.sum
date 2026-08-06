@@ -23,6 +23,10 @@ github.com/touchmeangel/rox_proto v0.0.0-20260806072122-75613b45e855 h1:sih8YrfU
 github.com/touchmeangel/rox_proto v0.0.0-20260806072122-75613b45e855/go.mod h1:bXAggi/BSa+8BahPjpyHu88y7K0AmJ+vyvMSGZdqf/Q=
 github.com/touchmeangel/rox_proto v0.1.0 h1:nB5VTnRa8CDs8WEBT4Bjm/FjYSUxp0UsJ9JG5uOR3Ws=
 github.com/touchmeangel/rox_proto v0.1.0/go.mod h1:bXAggi/BSa+8BahPjpyHu88y7K0AmJ+vyvMSGZdqf/Q=
+github.com/touchmeangel/rox_proto v0.2.0 h1:Yz+hJmdOD7fSWl7+cBMbrgmKi+qlbICzio3AJno0/6U=
+github.com/touchmeangel/rox_proto v0.2.0/go.mod h1:bXAggi/BSa+8BahPjpyHu88y7K0AmJ+vyvMSGZdqf/Q=
+github.com/touchmeangel/rox_proto v0.2.2 h1:jO50u6M6hLNGMIl+2taDCxM8LBhpIx/2hxnBJGXCDNs=
+github.com/touchmeangel/rox_proto v0.2.2/go.mod h1:bXAggi/BSa+8BahPjpyHu88y7K0AmJ+vyvMSGZdqf/Q=
 github.com/touchmeangel/rox_sdk_go v0.2.0 h1:MS2YYYJDKXN7xrlBGHMaNBZ/OBjB6/8WVmFWmMiNEaA=
 github.com/touchmeangel/rox_sdk_go v0.2.0/go.mod h1:BVbATmSBPlCtCKfNRQUqwog7QPvSojQ7vHEfDn2oHGI=
 github.com/touchmeangel/rox_sdk_go v0.2.1 h1:XVwsHPw7+pNYFj7ojg3an3UjXl1VQ4wyQDig6kan1KU=
