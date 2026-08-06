@@ -26,6 +26,7 @@ var (
 type Claims struct {
 	jwt.RegisteredClaims
 	UserID       string   `json:"user_id"`
+	Username     string   `json:"username"`
 	SessionID    string   `json:"session_id"`
 	Email        string   `json:"email"`
 	Roles        []string `json:"roles"`
@@ -66,7 +67,7 @@ func hashToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (m *Manager) GenerateAccessToken(ctx context.Context, userID, sessionID, email string, roles []string) (string, error) {
+func (m *Manager) GenerateAccessToken(ctx context.Context, userID, sessionID, username, email string, roles []string) (string, error) {
 	version, err := m.TokenStore.GetUserTokenVersion(ctx, userID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get token version: %w", err)
@@ -85,6 +86,7 @@ func (m *Manager) GenerateAccessToken(ctx context.Context, userID, sessionID, em
 		},
 		UserID:       userID,
 		SessionID:    sessionID,
+		Username:     username,
 		Email:        email,
 		Roles:        roles,
 		TokenVersion: version,
@@ -116,7 +118,7 @@ func (m *Manager) generateRefreshToken(sessionID, userID string) (string, error)
 	return token.SignedString(m.RefreshTokenSecret)
 }
 
-func (m *Manager) NewSession(ctx context.Context, userID, email string, roles []string, deviceName, ipAddress string) (*TokenPair, error) {
+func (m *Manager) NewSession(ctx context.Context, userID, username, email string, roles []string, deviceName, ipAddress string) (*TokenPair, error) {
 	sessionID := uuid.New().String()
 
 	refreshToken, err := m.generateRefreshToken(sessionID, userID)
@@ -129,7 +131,7 @@ func (m *Manager) NewSession(ctx context.Context, userID, email string, roles []
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
 
-	accessToken, err := m.GenerateAccessToken(ctx, userID, sessionID, email, roles)
+	accessToken, err := m.GenerateAccessToken(ctx, userID, sessionID, username, email, roles)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate access token: %w", err)
 	}
@@ -190,7 +192,7 @@ func (m *Manager) ValidateAccessToken(ctx context.Context, tokenString string) (
 	return claims, nil
 }
 
-func (m *Manager) Refresh(ctx context.Context, refreshTokenString, email string, roles []string, deviceName, ipAddress string) (*TokenPair, error) {
+func (m *Manager) Refresh(ctx context.Context, refreshTokenString, username, email string, roles []string, deviceName, ipAddress string) (*TokenPair, error) {
 	token, err := jwt.ParseWithClaims(
 		refreshTokenString,
 		&Claims{},
@@ -237,7 +239,7 @@ func (m *Manager) Refresh(ctx context.Context, refreshTokenString, email string,
 		return nil, err
 	}
 
-	accessToken, err := m.GenerateAccessToken(ctx, userID, sessionID, email, roles)
+	accessToken, err := m.GenerateAccessToken(ctx, userID, sessionID, username, email, roles)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate access token: %w", err)
 	}

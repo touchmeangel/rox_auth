@@ -12,6 +12,7 @@ import (
 
 type Config struct {
 	ListenAddr         string
+	DatabaseURL        string
 	MaxConcurrentTasks int
 	JWTAccessPrivKey   ed25519.PrivateKey
 	JWTRefreshPrivKey  ed25519.PrivateKey
@@ -21,7 +22,8 @@ type Config struct {
 
 func LoadConfig() (Config, error) {
 	cfg := Config{
-		ListenAddr: os.Getenv("LISTEN_ADDRESS"),
+		ListenAddr:  os.Getenv("LISTEN_ADDRESS"),
+		DatabaseURL: os.Getenv("DATABASE_URL"),
 	}
 
 	accessSecret := os.Getenv("JWT_ACCESS_SECRET")
@@ -30,6 +32,9 @@ func LoadConfig() (Config, error) {
 	var missing []string
 	if cfg.ListenAddr == "" {
 		missing = append(missing, "LISTEN_ADDRESS")
+	}
+	if cfg.DatabaseURL == "" {
+		missing = append(missing, "DATABASE_URL")
 	}
 	if accessSecret == "" {
 		missing = append(missing, "JWT_ACCESS_SECRET")
