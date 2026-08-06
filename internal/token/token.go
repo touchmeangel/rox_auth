@@ -11,6 +11,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/touchmeangel/rox_sdk_go/models/user"
 )
 
 var (
@@ -25,13 +26,13 @@ var (
 
 type Claims struct {
 	jwt.RegisteredClaims
-	UserID       string   `json:"user_id"`
-	Username     string   `json:"username"`
-	SessionID    string   `json:"session_id"`
-	Email        string   `json:"email"`
-	Roles        []string `json:"roles"`
-	TokenVersion int      `json:"token_version"`
-	TokenType    string   `json:"token_type"`
+	UserID       string      `json:"user_id"`
+	Username     string      `json:"username"`
+	SessionID    string      `json:"session_id"`
+	Email        string      `json:"email"`
+	Roles        []user.Role `json:"roles"`
+	TokenVersion int         `json:"token_version"`
+	TokenType    string      `json:"token_type"`
 }
 
 type TokenPair struct {
@@ -67,7 +68,7 @@ func hashToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (m *Manager) GenerateAccessToken(ctx context.Context, userID, sessionID, username, email string, roles []string) (string, error) {
+func (m *Manager) GenerateAccessToken(ctx context.Context, userID, sessionID, username, email string, roles []user.Role) (string, error) {
 	version, err := m.TokenStore.GetUserTokenVersion(ctx, userID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get token version: %w", err)
@@ -118,7 +119,7 @@ func (m *Manager) generateRefreshToken(sessionID, userID string) (string, error)
 	return token.SignedString(m.RefreshTokenSecret)
 }
 
-func (m *Manager) NewSession(ctx context.Context, userID, username, email string, roles []string, deviceName, ipAddress string) (*TokenPair, error) {
+func (m *Manager) NewSession(ctx context.Context, userID, username, email string, roles []user.Role, deviceName, ipAddress string) (*TokenPair, error) {
 	sessionID := uuid.New().String()
 
 	refreshToken, err := m.generateRefreshToken(sessionID, userID)
@@ -192,7 +193,7 @@ func (m *Manager) ValidateAccessToken(ctx context.Context, tokenString string) (
 	return claims, nil
 }
 
-func (m *Manager) Refresh(ctx context.Context, refreshTokenString, username, email string, roles []string, deviceName, ipAddress string) (*TokenPair, error) {
+func (m *Manager) Refresh(ctx context.Context, refreshTokenString, username, email string, roles []user.Role, deviceName, ipAddress string) (*TokenPair, error) {
 	token, err := jwt.ParseWithClaims(
 		refreshTokenString,
 		&Claims{},
