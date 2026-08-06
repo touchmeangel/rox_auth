@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/touchmeangel/rox_auth/internal/store"
 	"github.com/touchmeangel/rox_auth/internal/token"
 	authpb "github.com/touchmeangel/rox_proto/rox/auth/v1"
+	"github.com/touchmeangel/rox_sdk_go/models/user"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -19,10 +19,10 @@ type Server struct {
 	authpb.UnimplementedAuthServiceServer
 
 	tokenManager *token.Manager
-	userStore    store.UserStore
+	userStore    user.UserStore
 }
 
-func NewServer(userStore store.UserStore, tokenStore token.Store, accessTokenSecret, refreshTokenSecret ed25519.PrivateKey, accessTokenTTL, refreshTokenTTL time.Duration, issuer string, audience []string) *Server {
+func NewServer(userStore user.UserStore, tokenStore token.Store, accessTokenSecret, refreshTokenSecret ed25519.PrivateKey, accessTokenTTL, refreshTokenTTL time.Duration, issuer string, audience []string) *Server {
 	tokenManager := token.NewManager(tokenStore, accessTokenSecret, refreshTokenSecret, accessTokenTTL, refreshTokenTTL, issuer, audience)
 
 	return &Server{

@@ -12,7 +12,7 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/redis/go-redis/v9 v9.22.0 // indirect
 	github.com/touchmeangel/rox_proto v0.1.0 // indirect
-	github.com/touchmeangel/rox_sdk_go v0.2.0 // indirect
+	github.com/touchmeangel/rox_sdk_go v0.2.1 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
