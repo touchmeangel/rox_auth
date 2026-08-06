@@ -13,14 +13,12 @@ import (
 const (
 	sessionKeyPrefix      = "session:"
 	userSessionsKeyPrefix = "user_sessions:"
-	accessBlacklistPrefix = "access_blacklist:"
-	tokenVersionKeyPrefix = "token_version:"
+	validAfterKeyPrefix   = "tokens_valid_after:"
 )
 
-func sessionKey(sessionID string) string       { return sessionKeyPrefix + sessionID }
-func userSessionsKey(userID string) string     { return userSessionsKeyPrefix + userID }
-func blacklistKey(accessTokenID string) string { return accessBlacklistPrefix + accessTokenID }
-func versionKey(userID string) string          { return tokenVersionKeyPrefix + userID }
+func sessionKey(sessionID string) string   { return sessionKeyPrefix + sessionID }
+func userSessionsKey(userID string) string { return userSessionsKeyPrefix + userID }
+func validAfterKey(userID string) string   { return validAfterKeyPrefix + userID }
 
 type RedisTokenStore struct {
 	client *redis.Client
@@ -250,40 +248,31 @@ func parseSessionData(sessionID string, fields map[string]string) (*SessionData,
 	}, nil
 }
 
-func (s *RedisTokenStore) IsAccessTokenBlacklisted(ctx context.Context, accessTokenID string) (bool, error) {
-	n, err := s.client.Exists(ctx, blacklistKey(accessTokenID)).Result()
-	if err != nil {
-		return false, fmt.Errorf("check access token blacklist: %w", err)
+var setTokensValidAfterScript = redis.NewScript(`
+local current = redis.call('GET', KEYS[1])
+if current == false or tonumber(ARGV[1]) > tonumber(current) then
+	redis.call('SET', KEYS[1], ARGV[1])
+	return 1
+end
+return 0
+`)
+
+func (s *RedisTokenStore) GetUserTokensValidAfter(ctx context.Context, userID string) (time.Time, error) {
+	v, err := s.client.Get(ctx, validAfterKey(userID)).Int64()
+	if errors.Is(err, redis.Nil) {
+		return time.Time{}, nil
 	}
-	return n > 0, nil
+	if err != nil {
+		return time.Time{}, fmt.Errorf("get user tokens valid-after: %w", err)
+	}
+	return time.UnixMilli(v), nil
 }
 
-func (s *RedisTokenStore) BlacklistAccessToken(ctx context.Context, accessTokenID string, expiresAt time.Time) error {
-	ttl := time.Until(expiresAt)
-	if ttl <= 0 {
-		return nil
-	}
-	if err := s.client.Set(ctx, blacklistKey(accessTokenID), "1", ttl).Err(); err != nil {
-		return fmt.Errorf("blacklist access token: %w", err)
+func (s *RedisTokenStore) SetUserTokensValidAfter(ctx context.Context, userID string, cutoff time.Time) error {
+	if _, err := setTokensValidAfterScript.Run(ctx, s.client,
+		[]string{validAfterKey(userID)}, cutoff.UnixMilli(),
+	).Result(); err != nil {
+		return fmt.Errorf("set user tokens valid-after: %w", err)
 	}
 	return nil
-}
-
-func (s *RedisTokenStore) GetUserTokenVersion(ctx context.Context, userID string) (int, error) {
-	v, err := s.client.Get(ctx, versionKey(userID)).Int()
-	if errors.Is(err, redis.Nil) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, fmt.Errorf("get user token version: %w", err)
-	}
-	return v, nil
-}
-
-func (s *RedisTokenStore) IncrementUserTokenVersion(ctx context.Context, userID string) (int64, error) {
-	v, err := s.client.Incr(ctx, versionKey(userID)).Result()
-	if err != nil {
-		return 0, fmt.Errorf("increment user token version: %w", err)
-	}
-	return v, nil
 }

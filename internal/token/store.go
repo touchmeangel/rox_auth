@@ -21,8 +21,6 @@ type Store interface {
 	RevokeSession(ctx context.Context, sessionID string) error
 	RevokeAllUserSessions(ctx context.Context, userID string) error
 	ListUserSessions(ctx context.Context, userID string) ([]*SessionData, error)
-	IsAccessTokenBlacklisted(ctx context.Context, accessTokenID string) (bool, error)
-	BlacklistAccessToken(ctx context.Context, accessTokenID string, expiresAt time.Time) error
-	GetUserTokenVersion(ctx context.Context, userID string) (int, error)
-	IncrementUserTokenVersion(ctx context.Context, userID string) (int64, error)
+	GetUserTokensValidAfter(ctx context.Context, userID string) (time.Time, error)
+	SetUserTokensValidAfter(ctx context.Context, userID string, cutoff time.Time) error
 }

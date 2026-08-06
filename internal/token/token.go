@@ -28,13 +28,12 @@ var (
 
 type Claims struct {
 	jwt.RegisteredClaims
-	UserID       string      `json:"user_id"`
-	Username     string      `json:"username"`
-	SessionID    string      `json:"session_id"`
-	Email        string      `json:"email"`
-	Roles        []user.Role `json:"roles"`
-	TokenVersion int         `json:"token_version"`
-	TokenType    string      `json:"token_type"`
+	UserID    string      `json:"user_id"`
+	Username  string      `json:"username"`
+	SessionID string      `json:"session_id"`
+	Email     string      `json:"email"`
+	Roles     []user.Role `json:"roles"`
+	TokenType string      `json:"token_type"`
 }
 
 type TokenPair struct {
@@ -160,11 +159,6 @@ func (m *Manager) StartRefreshKeyRotation(ctx context.Context, interval time.Dur
 }
 
 func (m *Manager) GenerateAccessToken(ctx context.Context, userID, sessionID, username, email string, roles []user.Role) (string, error) {
-	version, err := m.TokenStore.GetUserTokenVersion(ctx, userID)
-	if err != nil {
-		return "", fmt.Errorf("failed to get token version: %w", err)
-	}
-
 	now := time.Now()
 	claims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -176,13 +170,12 @@ func (m *Manager) GenerateAccessToken(ctx context.Context, userID, sessionID, us
 			NotBefore: jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(m.AccessTokenTTL)),
 		},
-		UserID:       userID,
-		SessionID:    sessionID,
-		Username:     username,
-		Email:        email,
-		Roles:        roles,
-		TokenVersion: version,
-		TokenType:    "access",
+		UserID:    userID,
+		SessionID: sessionID,
+		Username:  username,
+		Email:     email,
+		Roles:     roles,
+		TokenType: "access",
 	}
 
 	m.accessKeysMu.RLock()
@@ -289,19 +282,11 @@ func (m *Manager) ValidateAccessToken(ctx context.Context, tokenString string) (
 		return nil, ErrInvalidTokenType
 	}
 
-	blacklisted, err := m.TokenStore.IsAccessTokenBlacklisted(ctx, claims.ID)
+	validAfter, err := m.TokenStore.GetUserTokensValidAfter(ctx, claims.UserID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check token blacklist: %w", err)
+		return nil, fmt.Errorf("failed to get user tokens valid-after: %w", err)
 	}
-	if blacklisted {
-		return nil, ErrTokenRevoked
-	}
-
-	currentVersion, err := m.TokenStore.GetUserTokenVersion(ctx, claims.UserID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user token version: %w", err)
-	}
-	if claims.TokenVersion < currentVersion {
+	if !validAfter.IsZero() && !claims.IssuedAt.Time.After(validAfter) {
 		return nil, ErrTokenRevoked
 	}
 
@@ -388,8 +373,8 @@ func (m *Manager) RevokeSession(ctx context.Context, sessionID string) error {
 }
 
 func (m *Manager) RevokeAllUserSessions(ctx context.Context, userID string) error {
-	if _, err := m.TokenStore.IncrementUserTokenVersion(ctx, userID); err != nil {
-		return fmt.Errorf("failed to increment token version: %w", err)
+	if err := m.TokenStore.SetUserTokensValidAfter(ctx, userID, time.Now()); err != nil {
+		return fmt.Errorf("failed to set tokens valid-after: %w", err)
 	}
 	return m.TokenStore.RevokeAllUserSessions(ctx, userID)
 }
