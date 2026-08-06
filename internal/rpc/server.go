@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/touchmeangel/rox_auth/internal/token"
+	"github.com/touchmeangel/rox_models_go/user"
 	authpb "github.com/touchmeangel/rox_proto/rox/auth/v1"
-	"github.com/touchmeangel/rox_sdk_go/models/user"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

@@ -13,7 +13,7 @@ import (
 	"github.com/touchmeangel/rox_auth/config"
 	"github.com/touchmeangel/rox_auth/internal/rpc"
 	"github.com/touchmeangel/rox_auth/internal/token"
-	"github.com/touchmeangel/rox_sdk_go/models/user"
+	"github.com/touchmeangel/rox_models_go/user"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 

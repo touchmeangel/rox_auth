@@ -19,6 +19,8 @@ github.com/redis/go-redis/v9 v9.22.0/go.mod h1:y2g0Wj8rQvuK0ELM+oxSudcLtC09JScs9
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UVUgZn+9EI=
 github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
+github.com/touchmeangel/rox_models_go v0.2.2 h1:T1P3ERo+PhptW1OQz2zGKDpXRjbgIizliSsoeXXor1k=
+github.com/touchmeangel/rox_models_go v0.2.2/go.mod h1:plqRCyYQgBM8NKyIhLbVQa0bvZpEctWXscJQk9y0KCI=
 github.com/touchmeangel/rox_proto v0.0.0-20260806072122-75613b45e855 h1:sih8YrfU5+uGTy68uxCZXZdg3FTitBYXrUy3b4rKK/g=
 github.com/touchmeangel/rox_proto v0.0.0-20260806072122-75613b45e855/go.mod h1:bXAggi/BSa+8BahPjpyHu88y7K0AmJ+vyvMSGZdqf/Q=
 github.com/touchmeangel/rox_proto v0.1.0 h1:nB5VTnRa8CDs8WEBT4Bjm/FjYSUxp0UsJ9JG5uOR3Ws=
@@ -27,10 +29,6 @@ github.com/touchmeangel/rox_proto v0.2.0 h1:Yz+hJmdOD7fSWl7+cBMbrgmKi+qlbICzio3A
 github.com/touchmeangel/rox_proto v0.2.0/go.mod h1:bXAggi/BSa+8BahPjpyHu88y7K0AmJ+vyvMSGZdqf/Q=
 github.com/touchmeangel/rox_proto v0.2.2 h1:jO50u6M6hLNGMIl+2taDCxM8LBhpIx/2hxnBJGXCDNs=
 github.com/touchmeangel/rox_proto v0.2.2/go.mod h1:bXAggi/BSa+8BahPjpyHu88y7K0AmJ+vyvMSGZdqf/Q=
-github.com/touchmeangel/rox_sdk_go v0.2.0 h1:MS2YYYJDKXN7xrlBGHMaNBZ/OBjB6/8WVmFWmMiNEaA=
-github.com/touchmeangel/rox_sdk_go v0.2.0/go.mod h1:BVbATmSBPlCtCKfNRQUqwog7QPvSojQ7vHEfDn2oHGI=
-github.com/touchmeangel/rox_sdk_go v0.2.1 h1:XVwsHPw7+pNYFj7ojg3an3UjXl1VQ4wyQDig6kan1KU=
-github.com/touchmeangel/rox_sdk_go v0.2.1/go.mod h1:A0qx31izZAooaIai56sjQTCUnVveavrk3xWuv1pKhE8=
 go.uber.org/atomic v1.11.0 h1:ZvwS0R+56ePWxUNi+Atn9dWONBPp/AUETXlHW0DxSjE=
 go.uber.org/atomic v1.11.0/go.mod h1:LUxbIzbOniOlMKjJjyPfpl4v+PKK2cNJn91OQbhoJI0=
 golang.org/x/net v0.55.0 h1:bcvxaJn3e1U6InsFWt1JUq1aSjnRxLzT2rtD2KfkDF8=

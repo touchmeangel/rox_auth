@@ -13,7 +13,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/touchmeangel/rox_sdk_go/models/user"
+	"github.com/touchmeangel/rox_models_go/user"
 )
 
 var (
