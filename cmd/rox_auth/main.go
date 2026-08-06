@@ -73,7 +73,16 @@ func main() {
 	)
 
 	redis := token.NewRedisTokenStore(cfg.RedisAddr, cfg.RedisPassword)
-	srv := rpc.NewServer(user.NewUserStore(pool), redis, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, "RoX", []string{})
+
+	srv := rpc.NewServer(
+		user.NewUserStore(pool),
+		redis,
+		cfg.AccessTokenTTL,
+		cfg.RefreshTokenTTL,
+		cfg.JwtIssuer,
+		cfg.JwtAudiences,
+	)
+
 	authpb.RegisterAuthServiceServer(grpcServer, srv)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

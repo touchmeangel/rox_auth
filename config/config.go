@@ -16,6 +16,8 @@ type Config struct {
 	MaxConcurrentTasks int
 	AccessTokenTTL     time.Duration
 	RefreshTokenTTL    time.Duration
+	JwtIssuer          string
+	JwtAudiences       []string
 }
 
 func LoadConfig() (Config, error) {
@@ -24,6 +26,7 @@ func LoadConfig() (Config, error) {
 		RedisAddr:     os.Getenv("REDIS_ADDRESS"),
 		RedisPassword: os.Getenv("REDIS_PASSWORD"),
 		DatabaseURL:   os.Getenv("DATABASE_URL"),
+		JwtIssuer:     os.Getenv("JWT_ISSUER"),
 	}
 
 	var missing []string
@@ -38,6 +41,9 @@ func LoadConfig() (Config, error) {
 	}
 	if cfg.RedisPassword == "" {
 		missing = append(missing, "REDIS_PASSWORD")
+	}
+	if cfg.JwtIssuer == "" {
+		missing = append(missing, "JWT_ISSUER")
 	}
 
 	raw := os.Getenv("MAX_CONCURRENT_TASKS")
@@ -65,6 +71,22 @@ func LoadConfig() (Config, error) {
 		return cfg, fmt.Errorf("REFRESH_TOKEN_TTL must be a positive duration (e.g. \"168h\"), got %q", refreshTTLRaw)
 	} else {
 		cfg.RefreshTokenTTL = d
+	}
+
+	audRaw := os.Getenv("JWT_AUDIENCES")
+	if audRaw == "" {
+		missing = append(missing, "JWT_AUDIENCES")
+	} else {
+		parts := strings.Split(audRaw, ",")
+		for _, p := range parts {
+			trimmed := strings.TrimSpace(p)
+			if trimmed != "" {
+				cfg.JwtAudiences = append(cfg.JwtAudiences, trimmed)
+			}
+		}
+		if len(cfg.JwtAudiences) == 0 {
+			return cfg, fmt.Errorf("JWT_AUDIENCES must contain at least one valid audience")
+		}
 	}
 
 	if len(missing) > 0 {
