@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"log/slog"
 	"net"
 	"os"
@@ -21,17 +20,10 @@ import (
 	authpb "github.com/touchmeangel/rox_proto/rox/auth/v1"
 )
 
-func main() {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-
-	cfg, err := config.LoadConfig()
+func createPool(databaseURL string) (*pgxpool.Pool, error) {
+	poolCfg, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
-		log.Fatalf("failed to load config: %v", err)
-	}
-
-	poolCfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
-	if err != nil {
-		log.Fatalf("parsing pool config: %v", err)
+		return nil, err
 	}
 
 	poolCfg.MaxConnLifetime = time.Hour
@@ -40,14 +32,32 @@ func main() {
 
 	pool, err := pgxpool.NewWithConfig(context.Background(), poolCfg)
 	if err != nil {
-		log.Fatalf("creating pool: %v", err)
+		return nil, err
 	}
 
 	pingCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := pool.Ping(pingCtx); err != nil {
-		log.Fatalf("pinging db: %v", err)
+		return nil, err
 	}
+
+	return pool, nil
+}
+
+func main() {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		logger.Error("failed to load config", "error", err)
+	}
+
+	pool, err := createPool(cfg.DatabaseURL)
+	if err != nil {
+		logger.Error("failed to connect to database", "error", err)
+		return
+	}
+	defer pool.Close()
 
 	lis, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
