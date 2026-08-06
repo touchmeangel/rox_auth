@@ -7,10 +7,6 @@ import (
 )
 
 func (s *Server) GetPublicKeys(ctx context.Context, req *authpb.GetPublicKeysRequest) (*authpb.GetPublicKeysResponse, error) {
-	err := s.tokenManager.RevokeAllUserSessions(ctx, userID)
-	if err != nil {
-		return nil, toStatus(err)
-	}
-
+	pubkeys := s.tokenManager.PublicKeys()
 	return &authpb.GetPublicKeysResponse{}, nil
 }

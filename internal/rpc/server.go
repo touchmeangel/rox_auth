@@ -2,7 +2,6 @@ package rpc
 
 import (
 	"context"
-	"crypto/ed25519"
 	"errors"
 	"log/slog"
 	"time"
@@ -22,8 +21,8 @@ type Server struct {
 	userStore    user.UserStore
 }
 
-func NewServer(userStore user.UserStore, tokenStore token.Store, accessTokenSecret, refreshTokenSecret ed25519.PrivateKey, accessTokenTTL, refreshTokenTTL time.Duration, issuer string, audience []string) *Server {
-	tokenManager := token.NewManager(tokenStore, accessTokenSecret, refreshTokenSecret, accessTokenTTL, refreshTokenTTL, issuer, audience)
+func NewServer(userStore user.UserStore, tokenStore token.Store, accessTokenTTL, refreshTokenTTL time.Duration, issuer string, audience []string) *Server {
+	tokenManager := token.NewManager(tokenStore, accessTokenTTL, refreshTokenTTL, issuer, audience)
 
 	return &Server{
 		tokenManager: tokenManager,

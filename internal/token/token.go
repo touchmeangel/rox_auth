@@ -3,10 +3,12 @@ package token
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -41,31 +43,120 @@ type TokenPair struct {
 	ExpiresAt    time.Time `json:"expires_at"`
 }
 
-type Manager struct {
-	TokenStore         Store
-	AccessTokenSecret  ed25519.PrivateKey
-	RefreshTokenSecret ed25519.PrivateKey
-	AccessTokenTTL     time.Duration
-	RefreshTokenTTL    time.Duration
-	Issuer             string
-	Audience           []string
+type SigningKey struct {
+	KeyID      string
+	PrivateKey ed25519.PrivateKey
+	RetiredAt  time.Time
 }
 
-func NewManager(store Store, accessTokenSecret, refreshTokenSecret ed25519.PrivateKey, accessTokenTTL, refreshTokenTTL time.Duration, issuer string, audience []string) *Manager {
+type Manager struct {
+	TokenStore Store
+
+	accessKeysMu    sync.RWMutex
+	AccessTokenKeys []SigningKey
+
+	refreshKeysMu    sync.RWMutex
+	RefreshTokenKeys []SigningKey
+
+	AccessTokenTTL  time.Duration
+	RefreshTokenTTL time.Duration
+	Issuer          string
+	Audience        []string
+}
+
+func NewManager(store Store, accessTokenTTL, refreshTokenTTL time.Duration, issuer string, audience []string) *Manager {
 	return &Manager{
-		TokenStore:         store,
-		AccessTokenSecret:  accessTokenSecret,
-		RefreshTokenSecret: refreshTokenSecret,
-		AccessTokenTTL:     accessTokenTTL,
-		RefreshTokenTTL:    refreshTokenTTL,
-		Issuer:             issuer,
-		Audience:           audience,
+		TokenStore:       store,
+		AccessTokenKeys:  []SigningKey{newSigningKey()},
+		RefreshTokenKeys: []SigningKey{newSigningKey()},
+		AccessTokenTTL:   accessTokenTTL,
+		RefreshTokenTTL:  refreshTokenTTL,
+		Issuer:           issuer,
+		Audience:         audience,
 	}
+}
+
+func newSigningKey() SigningKey {
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		panic(fmt.Sprintf("token: failed to generate signing key: %v", err))
+	}
+	return SigningKey{KeyID: uuid.New().String(), PrivateKey: priv}
 }
 
 func hashToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
+}
+
+func (m *Manager) RotateAccessTokenKey() {
+	next := newSigningKey()
+
+	m.accessKeysMu.Lock()
+	defer m.accessKeysMu.Unlock()
+
+	if len(m.AccessTokenKeys) > 0 {
+		m.AccessTokenKeys[0].RetiredAt = time.Now()
+	}
+	keys := append([]SigningKey{next}, m.AccessTokenKeys...)
+
+	retained := make([]SigningKey, 0, len(keys))
+	for _, k := range keys {
+		if k.RetiredAt.IsZero() || time.Since(k.RetiredAt) < m.AccessTokenTTL {
+			retained = append(retained, k)
+		}
+	}
+	m.AccessTokenKeys = retained
+}
+
+func (m *Manager) StartAccessKeyRotation(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				m.RotateAccessTokenKey()
+			}
+		}
+	}()
+}
+
+func (m *Manager) RotateRefreshTokenKey() {
+	next := newSigningKey()
+
+	m.refreshKeysMu.Lock()
+	defer m.refreshKeysMu.Unlock()
+
+	if len(m.RefreshTokenKeys) > 0 {
+		m.RefreshTokenKeys[0].RetiredAt = time.Now()
+	}
+	keys := append([]SigningKey{next}, m.RefreshTokenKeys...)
+
+	retained := make([]SigningKey, 0, len(keys))
+	for _, k := range keys {
+		if k.RetiredAt.IsZero() || time.Since(k.RetiredAt) < m.RefreshTokenTTL {
+			retained = append(retained, k)
+		}
+	}
+	m.RefreshTokenKeys = retained
+}
+
+func (m *Manager) StartRefreshKeyRotation(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				m.RotateRefreshTokenKey()
+			}
+		}
+	}()
 }
 
 func (m *Manager) GenerateAccessToken(ctx context.Context, userID, sessionID, username, email string, roles []user.Role) (string, error) {
@@ -94,11 +185,20 @@ func (m *Manager) GenerateAccessToken(ctx context.Context, userID, sessionID, us
 		TokenType:    "access",
 	}
 
+	m.accessKeysMu.RLock()
+	signingKey := m.AccessTokenKeys[0]
+	m.accessKeysMu.RUnlock()
+
 	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
-	return token.SignedString(m.AccessTokenSecret)
+	token.Header["kid"] = signingKey.KeyID
+	return token.SignedString(signingKey.PrivateKey)
 }
 
-func (m *Manager) generateRefreshToken(sessionID, userID string) (string, error) {
+func (m *Manager) generateRefreshToken(sessionID, userID string) (signed string, err error) {
+	m.refreshKeysMu.RLock()
+	signingKey := m.RefreshTokenKeys[0]
+	m.refreshKeysMu.RUnlock()
+
 	now := time.Now()
 	claims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -116,7 +216,10 @@ func (m *Manager) generateRefreshToken(sessionID, userID string) (string, error)
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
-	return token.SignedString(m.RefreshTokenSecret)
+	token.Header["kid"] = signingKey.KeyID
+
+	signed, err = token.SignedString(signingKey.PrivateKey)
+	return signed, err
 }
 
 func (m *Manager) NewSession(ctx context.Context, userID, username, email string, roles []user.Role, deviceName, ipAddress string) (*TokenPair, error) {
@@ -152,7 +255,19 @@ func (m *Manager) ValidateAccessToken(ctx context.Context, tokenString string) (
 			if _, ok := token.Method.(*jwt.SigningMethodEd25519); !ok {
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 			}
-			return m.AccessTokenSecret.Public().(ed25519.PublicKey), nil
+			kid, ok := token.Header["kid"].(string)
+			if !ok {
+				return nil, errors.New("token missing kid header")
+			}
+
+			m.accessKeysMu.RLock()
+			defer m.accessKeysMu.RUnlock()
+			for _, k := range m.AccessTokenKeys {
+				if k.KeyID == kid {
+					return k.PrivateKey.Public().(ed25519.PublicKey), nil
+				}
+			}
+			return nil, fmt.Errorf("unknown key id: %s", kid)
 		},
 		jwt.WithValidMethods([]string{"EdDSA"}),
 		jwt.WithIssuer(m.Issuer),
@@ -201,7 +316,19 @@ func (m *Manager) ValidateRefreshToken(ctx context.Context, tokenString string) 
 			if _, ok := token.Method.(*jwt.SigningMethodEd25519); !ok {
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 			}
-			return m.RefreshTokenSecret.Public().(ed25519.PublicKey), nil
+			kid, ok := token.Header["kid"].(string)
+			if !ok {
+				return nil, errors.New("token missing kid header")
+			}
+
+			m.refreshKeysMu.RLock()
+			defer m.refreshKeysMu.RUnlock()
+			for _, k := range m.RefreshTokenKeys {
+				if k.KeyID == kid {
+					return k.PrivateKey.Public().(ed25519.PublicKey), nil
+				}
+			}
+			return nil, fmt.Errorf("unknown key id: %s", kid)
 		},
 		jwt.WithValidMethods([]string{"EdDSA"}),
 		jwt.WithIssuer(m.Issuer),
@@ -225,12 +352,12 @@ func (m *Manager) ValidateRefreshToken(ctx context.Context, tokenString string) 
 
 func (m *Manager) Refresh(ctx context.Context, claims *Claims, refreshTokenString, username, email string, roles []user.Role, deviceName, ipAddress string) (*TokenPair, error) {
 	sessionID := claims.ID
-	newExpiresAt := time.Now().Add(m.RefreshTokenTTL)
 
 	newRefreshToken, err := m.generateRefreshToken(sessionID, claims.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate refresh token: %w", err)
 	}
+	newExpiresAt := time.Now().Add(m.RefreshTokenTTL)
 
 	userID, err := m.TokenStore.ConsumeRefreshToken(
 		ctx, sessionID,
@@ -281,4 +408,23 @@ func (m *Manager) RevokeAllUserSessions(ctx context.Context, userID string) erro
 
 func (m *Manager) ListUserSessions(ctx context.Context, userID string) ([]*SessionData, error) {
 	return m.TokenStore.ListUserSessions(ctx, userID)
+}
+
+type PublicKeyInfo struct {
+	KeyID     string
+	PublicKey ed25519.PublicKey
+}
+
+func (m *Manager) PublicKeys() []PublicKeyInfo {
+	m.accessKeysMu.RLock()
+	defer m.accessKeysMu.RUnlock()
+
+	keys := make([]PublicKeyInfo, 0, len(m.AccessTokenKeys))
+	for _, k := range m.AccessTokenKeys {
+		keys = append(keys, PublicKeyInfo{
+			KeyID:     k.KeyID,
+			PublicKey: k.PrivateKey.Public().(ed25519.PublicKey),
+		})
+	}
+	return keys
 }
