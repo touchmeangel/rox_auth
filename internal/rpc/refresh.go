@@ -23,7 +23,7 @@ func (s *Server) Refresh(ctx context.Context, req *authpb.RefreshRequest) (*auth
 
 	userID := claims.UserID
 
-	user, err := s.userStore.GetUserProfile(ctx, userID)
+	user, err := s.userStore.GetProfile(ctx, userID)
 	if err != nil {
 		return nil, toStatus(err)
 	}
