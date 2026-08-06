@@ -3,7 +3,7 @@ package token
 import "time"
 
 type RefreshTokenData struct {
-	TokenID   string
+	SessionID string
 	UserID    string
 	ExpiresAt time.Time
 	Revoked   bool

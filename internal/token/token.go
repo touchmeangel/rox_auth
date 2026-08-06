@@ -3,6 +3,8 @@ package token
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -17,11 +19,14 @@ var (
 	ErrInvalidClaims    = errors.New("invalid token claims")
 	ErrTokenRevoked     = errors.New("token has been revoked")
 	ErrInvalidTokenType = errors.New("invalid token type")
+	ErrSessionNotFound  = errors.New("session not found")
+	ErrTokenReused      = errors.New("refresh token has already been rotated")
 )
 
 type Claims struct {
 	jwt.RegisteredClaims
 	UserID       string   `json:"user_id"`
+	SessionID    string   `json:"session_id"`
 	Email        string   `json:"email"`
 	Roles        []string `json:"roles"`
 	TokenVersion int      `json:"token_version"`
@@ -44,7 +49,7 @@ type Manager struct {
 	Audience           []string
 }
 
-func NewManager(store Store, accessTokenSecret, refreshTokenSecret []byte, accessTokenTTL, refreshTokenTTL time.Duration, issuer string, audience []string) *Manager {
+func NewManager(store Store, accessTokenSecret, refreshTokenSecret ed25519.PrivateKey, accessTokenTTL, refreshTokenTTL time.Duration, issuer string, audience []string) *Manager {
 	return &Manager{
 		TokenStore:         store,
 		AccessTokenSecret:  accessTokenSecret,
@@ -56,18 +61,21 @@ func NewManager(store Store, accessTokenSecret, refreshTokenSecret []byte, acces
 	}
 }
 
-func (m *Manager) GenerateAccessToken(ctx context.Context, userID, email string, roles []string) (string, error) {
+func hashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+func (m *Manager) GenerateAccessToken(ctx context.Context, userID, sessionID, email string, roles []string) (string, error) {
 	version, err := m.TokenStore.GetUserTokenVersion(ctx, userID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get token version: %w", err)
 	}
 
 	now := time.Now()
-	tokenID := uuid.New().String()
-
 	claims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
-			ID:        tokenID,
+			ID:        uuid.New().String(),
 			Subject:   userID,
 			Issuer:    m.Issuer,
 			Audience:  m.Audience,
@@ -76,6 +84,7 @@ func (m *Manager) GenerateAccessToken(ctx context.Context, userID, email string,
 			ExpiresAt: jwt.NewNumericDate(now.Add(m.AccessTokenTTL)),
 		},
 		UserID:       userID,
+		SessionID:    sessionID,
 		Email:        email,
 		Roles:        roles,
 		TokenVersion: version,
@@ -83,57 +92,46 @@ func (m *Manager) GenerateAccessToken(ctx context.Context, userID, email string,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
-
-	signedToken, err := token.SignedString(m.AccessTokenSecret)
-	if err != nil {
-		return "", fmt.Errorf("failed to sign access token: %w", err)
-	}
-
-	return signedToken, nil
+	return token.SignedString(m.AccessTokenSecret)
 }
 
-func (m *Manager) GenerateRefreshToken(ctx context.Context, userID string) (string, error) {
+func (m *Manager) generateRefreshToken(sessionID, userID string) (string, error) {
 	now := time.Now()
-	tokenID := uuid.New().String()
-	expiresAt := now.Add(m.RefreshTokenTTL)
-
 	claims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
-			ID:        tokenID,
+			ID:        sessionID,
 			Subject:   userID,
 			Issuer:    m.Issuer,
 			Audience:  m.Audience,
 			IssuedAt:  jwt.NewNumericDate(now),
 			NotBefore: jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(expiresAt),
+			ExpiresAt: jwt.NewNumericDate(now.Add(m.RefreshTokenTTL)),
 		},
 		UserID:    userID,
+		SessionID: sessionID,
 		TokenType: "refresh",
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
-
-	signedToken, err := token.SignedString(m.RefreshTokenSecret)
-	if err != nil {
-		return "", fmt.Errorf("failed to sign refresh token: %w", err)
-	}
-
-	if err := m.TokenStore.StoreRefreshToken(ctx, tokenID, userID, expiresAt); err != nil {
-		return "", fmt.Errorf("failed to store refresh token: %w", err)
-	}
-
-	return signedToken, nil
+	return token.SignedString(m.RefreshTokenSecret)
 }
 
-func (m *Manager) GenerateTokenPair(ctx context.Context, userID, email string, roles []string) (*TokenPair, error) {
-	accessToken, err := m.GenerateAccessToken(ctx, userID, email, roles)
+func (m *Manager) NewSession(ctx context.Context, userID, email string, roles []string, deviceName, ipAddress string) (*TokenPair, error) {
+	sessionID := uuid.New().String()
+
+	refreshToken, err := m.generateRefreshToken(sessionID, userID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to generate refresh token: %w", err)
 	}
 
-	refreshToken, err := m.GenerateRefreshToken(ctx, userID)
+	expiresAt := time.Now().Add(m.RefreshTokenTTL)
+	if err := m.TokenStore.CreateSession(ctx, sessionID, userID, deviceName, ipAddress, hashToken(refreshToken), expiresAt); err != nil {
+		return nil, fmt.Errorf("failed to create session: %w", err)
+	}
+
+	accessToken, err := m.GenerateAccessToken(ctx, userID, sessionID, email, roles)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to generate access token: %w", err)
 	}
 
 	return &TokenPair{
@@ -158,7 +156,6 @@ func (m *Manager) ValidateAccessToken(ctx context.Context, tokenString string) (
 		jwt.WithAudience(m.Audience[0]),
 		jwt.WithExpirationRequired(),
 	)
-
 	if err != nil {
 		if errors.Is(err, jwt.ErrTokenExpired) {
 			return nil, ErrExpiredToken
@@ -170,12 +167,11 @@ func (m *Manager) ValidateAccessToken(ctx context.Context, tokenString string) (
 	if !ok || !token.Valid {
 		return nil, ErrInvalidClaims
 	}
-
 	if claims.TokenType != "access" {
 		return nil, ErrInvalidTokenType
 	}
 
-	blacklisted, err := m.TokenStore.IsTokenBlacklisted(ctx, claims.ID)
+	blacklisted, err := m.TokenStore.IsAccessTokenBlacklisted(ctx, claims.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check token blacklist: %w", err)
 	}
@@ -194,7 +190,7 @@ func (m *Manager) ValidateAccessToken(ctx context.Context, tokenString string) (
 	return claims, nil
 }
 
-func (m *Manager) RefreshTokens(ctx context.Context, refreshTokenString string, email string, roles []string) (*TokenPair, error) {
+func (m *Manager) Refresh(ctx context.Context, refreshTokenString, email string, roles []string, deviceName, ipAddress string) (*TokenPair, error) {
 	token, err := jwt.ParseWithClaims(
 		refreshTokenString,
 		&Claims{},
@@ -209,7 +205,6 @@ func (m *Manager) RefreshTokens(ctx context.Context, refreshTokenString string, 
 		jwt.WithAudience(m.Audience[0]),
 		jwt.WithExpirationRequired(),
 	)
-
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidToken, err)
 	}
@@ -218,28 +213,40 @@ func (m *Manager) RefreshTokens(ctx context.Context, refreshTokenString string, 
 	if !ok || !token.Valid {
 		return nil, ErrInvalidClaims
 	}
-
 	if claims.TokenType != "refresh" {
 		return nil, ErrInvalidTokenType
 	}
 
-	storedToken, err := m.TokenStore.GetRefreshToken(ctx, claims.ID)
+	sessionID := claims.ID
+	newExpiresAt := time.Now().Add(m.RefreshTokenTTL)
+
+	newRefreshToken, err := m.generateRefreshToken(sessionID, claims.UserID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get stored refresh token: %w", err)
-	}
-	if storedToken == nil {
-		return nil, ErrInvalidToken
-	}
-	if storedToken.Revoked {
-		_ = m.TokenStore.RevokeAllUserTokens(ctx, claims.UserID)
-		return nil, ErrTokenRevoked
+		return nil, fmt.Errorf("failed to generate refresh token: %w", err)
 	}
 
-	if err := m.TokenStore.RevokeRefreshToken(ctx, claims.ID); err != nil {
-		return nil, fmt.Errorf("failed to revoke old refresh token: %w", err)
+	userID, err := m.TokenStore.ConsumeRefreshToken(
+		ctx, sessionID,
+		hashToken(refreshTokenString), hashToken(newRefreshToken),
+		deviceName, ipAddress, newExpiresAt,
+	)
+	if err != nil {
+		if errors.Is(err, ErrTokenReused) {
+			_ = m.RevokeAllUserSessions(ctx, claims.UserID)
+		}
+		return nil, err
 	}
 
-	return m.GenerateTokenPair(ctx, claims.UserID, email, roles)
+	accessToken, err := m.GenerateAccessToken(ctx, userID, sessionID, email, roles)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate access token: %w", err)
+	}
+
+	return &TokenPair{
+		AccessToken:  accessToken,
+		RefreshToken: newRefreshToken,
+		ExpiresAt:    time.Now().Add(m.AccessTokenTTL),
+	}, nil
 }
 
 func (m *Manager) RevokeAccessToken(ctx context.Context, tokenString string) error {
@@ -247,20 +254,24 @@ func (m *Manager) RevokeAccessToken(ctx context.Context, tokenString string) err
 	if err != nil {
 		return fmt.Errorf("failed to parse token: %w", err)
 	}
-
 	claims, ok := token.Claims.(*Claims)
 	if !ok {
 		return ErrInvalidClaims
 	}
-
-	return m.TokenStore.BlacklistToken(ctx, claims.ID, claims.ExpiresAt.Time)
+	return m.TokenStore.BlacklistAccessToken(ctx, claims.ID, claims.ExpiresAt.Time)
 }
 
-func (m *Manager) RevokeAllUserTokens(ctx context.Context, userID string) error {
-	_, err := m.TokenStore.IncrementUserTokenVersion(ctx, userID)
-	if err != nil {
+func (m *Manager) RevokeSession(ctx context.Context, sessionID string) error {
+	return m.TokenStore.RevokeSession(ctx, sessionID)
+}
+
+func (m *Manager) RevokeAllUserSessions(ctx context.Context, userID string) error {
+	if _, err := m.TokenStore.IncrementUserTokenVersion(ctx, userID); err != nil {
 		return fmt.Errorf("failed to increment token version: %w", err)
 	}
+	return m.TokenStore.RevokeAllUserSessions(ctx, userID)
+}
 
-	return m.TokenStore.RevokeAllUserTokens(ctx, userID)
+func (m *Manager) ListUserSessions(ctx context.Context, userID string) ([]*SessionData, error) {
+	return m.TokenStore.ListUserSessions(ctx, userID)
 }

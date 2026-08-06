@@ -2,130 +2,288 @@ package token
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
+	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
+const (
+	sessionKeyPrefix      = "session:"
+	userSessionsKeyPrefix = "user_sessions:"
+	accessBlacklistPrefix = "access_blacklist:"
+	tokenVersionKeyPrefix = "token_version:"
+)
+
+func sessionKey(sessionID string) string       { return sessionKeyPrefix + sessionID }
+func userSessionsKey(userID string) string     { return userSessionsKeyPrefix + userID }
+func blacklistKey(accessTokenID string) string { return accessBlacklistPrefix + accessTokenID }
+func versionKey(userID string) string          { return tokenVersionKeyPrefix + userID }
+
 type RedisTokenStore struct {
 	client *redis.Client
 }
 
-const (
-	refreshTokenPrefix = "refresh_token:"
-	blacklistPrefix    = "blacklist:"
-	tokenVersionPrefix = "token_version:"
-	userTokensPrefix   = "user_tokens:"
-)
-
 func NewRedisTokenStore(addr, password string, db int) *RedisTokenStore {
-	client := redis.NewClient(&redis.Options{
-		Addr:     addr,
-		Password: password,
-		DB:       db,
-	})
-	return &RedisTokenStore{client: client}
+	return &RedisTokenStore{
+		client: redis.NewClient(&redis.Options{
+			Addr:     addr,
+			Password: password,
+			DB:       db,
+		}),
+	}
 }
 
-func (s *RedisTokenStore) StoreRefreshToken(ctx context.Context, tokenID, userID string, expiresAt time.Time) error {
-	data := &RefreshTokenData{
-		TokenID:   tokenID,
-		UserID:    userID,
-		ExpiresAt: expiresAt,
-		Revoked:   false,
-		CreatedAt: time.Now(),
-	}
+var _ Store = (*RedisTokenStore)(nil)
 
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
-
+func (s *RedisTokenStore) CreateSession(ctx context.Context, sessionID, userID, deviceName, ipAddress, tokenHash string, expiresAt time.Time) error {
 	ttl := time.Until(expiresAt)
-	if err := s.client.Set(ctx, refreshTokenPrefix+tokenID, jsonData, ttl).Err(); err != nil {
-		return err
-	}
-
-	if err := s.client.SAdd(ctx, userTokensPrefix+userID, tokenID).Err(); err != nil {
-		return err
-	}
-
-	return s.client.Expire(ctx, userTokensPrefix+userID, ttl).Err()
-}
-
-func (s *RedisTokenStore) GetRefreshToken(ctx context.Context, tokenID string) (*RefreshTokenData, error) {
-	jsonData, err := s.client.Get(ctx, refreshTokenPrefix+tokenID).Bytes()
-	if err == redis.Nil {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	var data RefreshTokenData
-	if err := json.Unmarshal(jsonData, &data); err != nil {
-		return nil, err
-	}
-
-	return &data, nil
-}
-
-func (s *RedisTokenStore) RevokeRefreshToken(ctx context.Context, tokenID string) error {
-	data, err := s.GetRefreshToken(ctx, tokenID)
-	if err != nil || data == nil {
-		return err
-	}
-
-	data.Revoked = true
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
-
-	ttl := time.Until(data.ExpiresAt)
 	if ttl <= 0 {
+		return fmt.Errorf("create session: expiresAt %s is already in the past", expiresAt)
+	}
+
+	key := sessionKey(sessionID)
+	now := time.Now().Unix()
+
+	_, err := s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.HSet(ctx, key, map[string]interface{}{
+			"user_id":      userID,
+			"device_name":  deviceName,
+			"ip_address":   ipAddress,
+			"token_hash":   tokenHash,
+			"created_at":   now,
+			"last_used_at": now,
+			"expires_at":   expiresAt.Unix(),
+			"revoked":      "0",
+		})
+		pipe.Expire(ctx, key, ttl)
+		pipe.SAdd(ctx, userSessionsKey(userID), sessionID)
 		return nil
-	}
-	return s.client.Set(ctx, refreshTokenPrefix+tokenID, jsonData, ttl).Err()
-}
-
-func (s *RedisTokenStore) RevokeAllUserTokens(ctx context.Context, userID string) error {
-	tokenIDs, err := s.client.SMembers(ctx, userTokensPrefix+userID).Result()
+	})
 	if err != nil {
-		return err
+		return fmt.Errorf("create session: %w", err)
 	}
-
-	for _, tokenID := range tokenIDs {
-		if err := s.RevokeRefreshToken(ctx, tokenID); err != nil {
-			continue
-		}
-	}
-
 	return nil
 }
 
-func (s *RedisTokenStore) IsTokenBlacklisted(ctx context.Context, tokenID string) (bool, error) {
-	exists, err := s.client.Exists(ctx, blacklistPrefix+tokenID).Result()
-	return exists > 0, err
+// KEYS[1] = session key
+// ARGV[1] = presentedHash, ARGV[2] = newHash, ARGV[3] = deviceName,
+// ARGV[4] = ipAddress, ARGV[5] = new expires_at (unix), ARGV[6] = now (unix),
+// ARGV[7] = new TTL seconds
+var consumeRefreshTokenScript = redis.NewScript(`
+local key = KEYS[1]
+
+if redis.call('EXISTS', key) == 0 then
+	return 'ERR_NOT_FOUND'
+end
+
+if redis.call('HGET', key, 'revoked') == '1' then
+	return 'ERR_REVOKED'
+end
+
+if redis.call('HGET', key, 'token_hash') ~= ARGV[1] then
+	return 'ERR_REUSED'
+end
+
+local userID = redis.call('HGET', key, 'user_id')
+
+redis.call('HSET', key,
+	'token_hash', ARGV[2],
+	'device_name', ARGV[3],
+	'ip_address', ARGV[4],
+	'expires_at', ARGV[5],
+	'last_used_at', ARGV[6]
+)
+redis.call('EXPIRE', key, ARGV[7])
+
+return userID
+`)
+
+func (s *RedisTokenStore) ConsumeRefreshToken(ctx context.Context, sessionID, presentedHash, newHash, deviceName, ipAddress string, newExpiresAt time.Time) (string, error) {
+	ttl := time.Until(newExpiresAt)
+	if ttl <= 0 {
+		return "", ErrExpiredToken
+	}
+
+	res, err := consumeRefreshTokenScript.Run(ctx, s.client,
+		[]string{sessionKey(sessionID)},
+		presentedHash, newHash, deviceName, ipAddress,
+		newExpiresAt.Unix(), time.Now().Unix(), int64(ttl.Seconds()),
+	).Result()
+	if err != nil {
+		return "", fmt.Errorf("consume refresh token: %w", err)
+	}
+
+	result, ok := res.(string)
+	if !ok {
+		return "", fmt.Errorf("consume refresh token: unexpected script result type %T", res)
+	}
+
+	switch result {
+	case "ERR_NOT_FOUND":
+		return "", ErrSessionNotFound
+	case "ERR_REVOKED":
+		return "", ErrTokenRevoked
+	case "ERR_REUSED":
+		return "", ErrTokenReused
+	default:
+		return result, nil
+	}
 }
 
-func (s *RedisTokenStore) BlacklistToken(ctx context.Context, tokenID string, expiresAt time.Time) error {
+// KEYS[1] = session key
+var revokeSessionScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 0 then
+	return 0
+end
+redis.call('HSET', KEYS[1], 'revoked', '1')
+return 1
+`)
+
+func (s *RedisTokenStore) RevokeSession(ctx context.Context, sessionID string) error {
+	n, err := revokeSessionScript.Run(ctx, s.client, []string{sessionKey(sessionID)}).Int()
+	if err != nil {
+		return fmt.Errorf("revoke session: %w", err)
+	}
+	if n == 0 {
+		return ErrSessionNotFound
+	}
+	return nil
+}
+
+// KEYS[1] = user_sessions set key, ARGV[1] = session key prefix
+var revokeAllUserSessionsScript = redis.NewScript(`
+local ids = redis.call('SMEMBERS', KEYS[1])
+local revoked = {}
+for _, id in ipairs(ids) do
+	local key = ARGV[1] .. id
+	if redis.call('EXISTS', key) == 1 then
+		redis.call('HSET', key, 'revoked', '1')
+		table.insert(revoked, id)
+	end
+end
+if #revoked < #ids then
+	local isRevoked = {}
+	for _, id in ipairs(revoked) do isRevoked[id] = true end
+	local stale = {}
+	for _, id in ipairs(ids) do
+		if not isRevoked[id] then table.insert(stale, id) end
+	end
+	if #stale > 0 then
+		redis.call('SREM', KEYS[1], unpack(stale))
+	end
+end
+return #revoked
+`)
+
+func (s *RedisTokenStore) RevokeAllUserSessions(ctx context.Context, userID string) error {
+	if _, err := revokeAllUserSessionsScript.Run(ctx, s.client,
+		[]string{userSessionsKey(userID)}, sessionKeyPrefix,
+	).Result(); err != nil {
+		return fmt.Errorf("revoke all user sessions: %w", err)
+	}
+	return nil
+}
+
+func (s *RedisTokenStore) ListUserSessions(ctx context.Context, userID string) ([]*SessionData, error) {
+	setKey := userSessionsKey(userID)
+	ids, err := s.client.SMembers(ctx, setKey).Result()
+	if err != nil {
+		return nil, fmt.Errorf("list user sessions: %w", err)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	pipe := s.client.Pipeline()
+	cmds := make(map[string]*redis.MapStringStringCmd, len(ids))
+	for _, id := range ids {
+		cmds[id] = pipe.HGetAll(ctx, sessionKey(id))
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("list user sessions: %w", err)
+	}
+
+	sessions := make([]*SessionData, 0, len(ids))
+	var stale []interface{}
+	for id, cmd := range cmds {
+		fields, err := cmd.Result()
+		if err != nil || len(fields) == 0 {
+			stale = append(stale, id)
+			continue
+		}
+		sd, err := parseSessionData(id, fields)
+		if err != nil {
+			stale = append(stale, id)
+			continue
+		}
+		sessions = append(sessions, sd)
+	}
+
+	if len(stale) > 0 {
+		_ = s.client.SRem(ctx, setKey, stale...).Err()
+	}
+
+	return sessions, nil
+}
+
+func parseSessionData(sessionID string, fields map[string]string) (*SessionData, error) {
+	createdAt, err := strconv.ParseInt(fields["created_at"], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parse created_at: %w", err)
+	}
+	lastUsedAt, err := strconv.ParseInt(fields["last_used_at"], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parse last_used_at: %w", err)
+	}
+
+	return &SessionData{
+		SessionID:  sessionID,
+		UserID:     fields["user_id"],
+		DeviceName: fields["device_name"],
+		IPAddress:  fields["ip_address"],
+		CreatedAt:  time.Unix(createdAt, 0),
+		LastUsedAt: time.Unix(lastUsedAt, 0),
+		Revoked:    fields["revoked"] == "1",
+	}, nil
+}
+
+func (s *RedisTokenStore) IsAccessTokenBlacklisted(ctx context.Context, accessTokenID string) (bool, error) {
+	n, err := s.client.Exists(ctx, blacklistKey(accessTokenID)).Result()
+	if err != nil {
+		return false, fmt.Errorf("check access token blacklist: %w", err)
+	}
+	return n > 0, nil
+}
+
+func (s *RedisTokenStore) BlacklistAccessToken(ctx context.Context, accessTokenID string, expiresAt time.Time) error {
 	ttl := time.Until(expiresAt)
 	if ttl <= 0 {
 		return nil
 	}
-	return s.client.Set(ctx, blacklistPrefix+tokenID, "1", ttl).Err()
+	if err := s.client.Set(ctx, blacklistKey(accessTokenID), "1", ttl).Err(); err != nil {
+		return fmt.Errorf("blacklist access token: %w", err)
+	}
+	return nil
 }
 
 func (s *RedisTokenStore) GetUserTokenVersion(ctx context.Context, userID string) (int, error) {
-	version, err := s.client.Get(ctx, tokenVersionPrefix+userID).Int()
-	if err == redis.Nil {
-		return 0, nil // Default version is 0
+	v, err := s.client.Get(ctx, versionKey(userID)).Int()
+	if errors.Is(err, redis.Nil) {
+		return 0, nil
 	}
-	return version, err
+	if err != nil {
+		return 0, fmt.Errorf("get user token version: %w", err)
+	}
+	return v, nil
 }
 
 func (s *RedisTokenStore) IncrementUserTokenVersion(ctx context.Context, userID string) (int64, error) {
-	return s.client.Incr(ctx, tokenVersionPrefix+userID).Result()
+	v, err := s.client.Incr(ctx, versionKey(userID)).Result()
+	if err != nil {
+		return 0, fmt.Errorf("increment user token version: %w", err)
+	}
+	return v, nil
 }

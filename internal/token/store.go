@@ -5,13 +5,24 @@ import (
 	"time"
 )
 
+type SessionData struct {
+	SessionID  string
+	UserID     string
+	DeviceName string
+	IPAddress  string
+	CreatedAt  time.Time
+	LastUsedAt time.Time
+	Revoked    bool
+}
+
 type Store interface {
-	StoreRefreshToken(ctx context.Context, tokenID, userID string, expiresAt time.Time) error
-	GetRefreshToken(ctx context.Context, tokenID string) (*RefreshTokenData, error)
-	RevokeRefreshToken(ctx context.Context, tokenID string) error
-	RevokeAllUserTokens(ctx context.Context, userID string) error
-	IsTokenBlacklisted(ctx context.Context, tokenID string) (bool, error)
-	BlacklistToken(ctx context.Context, tokenID string, expiresAt time.Time) error
+	CreateSession(ctx context.Context, sessionID, userID, deviceName, ipAddress, tokenHash string, expiresAt time.Time) error
+	ConsumeRefreshToken(ctx context.Context, sessionID, presentedHash, newHash, deviceName, ipAddress string, newExpiresAt time.Time) (userID string, err error)
+	RevokeSession(ctx context.Context, sessionID string) error
+	RevokeAllUserSessions(ctx context.Context, userID string) error
+	ListUserSessions(ctx context.Context, userID string) ([]*SessionData, error)
+	IsAccessTokenBlacklisted(ctx context.Context, accessTokenID string) (bool, error)
+	BlacklistAccessToken(ctx context.Context, accessTokenID string, expiresAt time.Time) error
 	GetUserTokenVersion(ctx context.Context, userID string) (int, error)
 	IncrementUserTokenVersion(ctx context.Context, userID string) (int64, error)
 }
