@@ -9,10 +9,9 @@ import (
 )
 
 func (s *Server) RevokeSession(ctx context.Context, req *authpb.RevokeSessionRequest) (*authpb.RevokeSessionResponse, error) {
-	userID := req.GetUserId()
 	sessionID := req.GetSessionId()
 
-	if userID == "" || sessionID == "" {
+	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id, session_id are required")
 	}
 
