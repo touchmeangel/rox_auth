@@ -383,18 +383,6 @@ func (m *Manager) Refresh(ctx context.Context, claims *Claims, refreshTokenStrin
 	}, nil
 }
 
-func (m *Manager) RevokeAccessToken(ctx context.Context, tokenString string) error {
-	token, _, err := jwt.NewParser().ParseUnverified(tokenString, &Claims{})
-	if err != nil {
-		return fmt.Errorf("failed to parse token: %w", err)
-	}
-	claims, ok := token.Claims.(*Claims)
-	if !ok {
-		return ErrInvalidClaims
-	}
-	return m.TokenStore.BlacklistAccessToken(ctx, claims.ID, claims.ExpiresAt.Time)
-}
-
 func (m *Manager) RevokeSession(ctx context.Context, sessionID string) error {
 	return m.TokenStore.RevokeSession(ctx, sessionID)
 }
