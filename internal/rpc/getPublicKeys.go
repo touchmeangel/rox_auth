@@ -7,6 +7,16 @@ import (
 )
 
 func (s *Server) GetPublicKeys(ctx context.Context, req *authpb.GetPublicKeysRequest) (*authpb.GetPublicKeysResponse, error) {
-	pubkeys := s.tokenManager.PublicKeys()
-	return &authpb.GetPublicKeysResponse{}, nil
+	keys := s.tokenManager.PublicKeys()
+
+	resp := &authpb.GetPublicKeysResponse{
+		Keys: make([]*authpb.PublicKey, 0, len(keys)),
+	}
+	for _, k := range keys {
+		resp.Keys = append(resp.Keys, &authpb.PublicKey{
+			KeyId:     k.KeyID,
+			PublicKey: k.PublicKey,
+		})
+	}
+	return resp, nil
 }
