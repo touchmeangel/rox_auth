@@ -10,6 +10,8 @@ import (
 
 type Config struct {
 	ListenAddr         string
+	RedisAddr          string
+	RedisPassword      string
 	DatabaseURL        string
 	MaxConcurrentTasks int
 	AccessTokenTTL     time.Duration
@@ -18,8 +20,10 @@ type Config struct {
 
 func LoadConfig() (Config, error) {
 	cfg := Config{
-		ListenAddr:  os.Getenv("LISTEN_ADDRESS"),
-		DatabaseURL: os.Getenv("DATABASE_URL"),
+		ListenAddr:    os.Getenv("LISTEN_ADDRESS"),
+		RedisAddr:     os.Getenv("REDIS_ADDRESS"),
+		RedisPassword: os.Getenv("REDIS_PASSWORD"),
+		DatabaseURL:   os.Getenv("DATABASE_URL"),
 	}
 
 	var missing []string
@@ -28,6 +32,12 @@ func LoadConfig() (Config, error) {
 	}
 	if cfg.DatabaseURL == "" {
 		missing = append(missing, "DATABASE_URL")
+	}
+	if cfg.RedisAddr == "" {
+		missing = append(missing, "REDIS_ADDRESS")
+	}
+	if cfg.RedisPassword == "" {
+		missing = append(missing, "REDIS_PASSWORD")
 	}
 
 	raw := os.Getenv("MAX_CONCURRENT_TASKS")

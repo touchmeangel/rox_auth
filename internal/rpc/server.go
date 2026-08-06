@@ -18,10 +18,10 @@ type Server struct {
 	authpb.UnimplementedAuthServiceServer
 
 	tokenManager *token.Manager
-	userStore    user.UserStore
+	userStore    *user.UserStore
 }
 
-func NewServer(userStore user.UserStore, tokenStore token.Store, accessTokenTTL, refreshTokenTTL time.Duration, issuer string, audience []string) *Server {
+func NewServer(userStore *user.UserStore, tokenStore token.Store, accessTokenTTL, refreshTokenTTL time.Duration, issuer string, audience []string) *Server {
 	tokenManager := token.NewManager(tokenStore, accessTokenTTL, refreshTokenTTL, issuer, audience)
 
 	return &Server{

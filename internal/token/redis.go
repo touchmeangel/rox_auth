@@ -24,12 +24,11 @@ type RedisTokenStore struct {
 	client *redis.Client
 }
 
-func NewRedisTokenStore(addr, password string, db int) *RedisTokenStore {
+func NewRedisTokenStore(addr, password string) *RedisTokenStore {
 	return &RedisTokenStore{
 		client: redis.NewClient(&redis.Options{
 			Addr:     addr,
 			Password: password,
-			DB:       db,
 		}),
 	}
 }
