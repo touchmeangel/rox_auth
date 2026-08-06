@@ -193,9 +193,9 @@ func (m *Manager) ValidateAccessToken(ctx context.Context, tokenString string) (
 	return claims, nil
 }
 
-func (m *Manager) Refresh(ctx context.Context, refreshTokenString, username, email string, roles []user.Role, deviceName, ipAddress string) (*TokenPair, error) {
+func (m *Manager) ValidateRefreshToken(ctx context.Context, tokenString string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(
-		refreshTokenString,
+		tokenString,
 		&Claims{},
 		func(token *jwt.Token) (any, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodEd25519); !ok {
@@ -220,6 +220,10 @@ func (m *Manager) Refresh(ctx context.Context, refreshTokenString, username, ema
 		return nil, ErrInvalidTokenType
 	}
 
+	return claims, nil
+}
+
+func (m *Manager) Refresh(ctx context.Context, claims *Claims, refreshTokenString, username, email string, roles []user.Role, deviceName, ipAddress string) (*TokenPair, error) {
 	sessionID := claims.ID
 	newExpiresAt := time.Now().Add(m.RefreshTokenTTL)
 
