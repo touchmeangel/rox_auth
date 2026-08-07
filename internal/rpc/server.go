@@ -74,14 +74,22 @@ var sentinelCodes = map[error]codes.Code{
 	token.ErrTokenReused:      codes.Unauthenticated,
 	token.ErrInvalidTokenType: codes.InvalidArgument,
 	token.ErrSessionNotFound:  codes.Unauthenticated,
+	user.ErrNotFound:          codes.Unauthenticated,
 }
 
 func toStatus(err error) error {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return status.Error(codes.Canceled, err.Error())
+	case errors.Is(err, context.DeadlineExceeded):
+		return status.Error(codes.DeadlineExceeded, err.Error())
+	}
+
 	for sentinel, code := range sentinelCodes {
 		if errors.Is(err, sentinel) {
 			return status.Error(code, err.Error())
 		}
 	}
 
-	return status.Errorf(codes.Internal, "%v", err)
+	return status.Error(codes.Internal, "internal error")
 }
