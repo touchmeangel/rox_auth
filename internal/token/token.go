@@ -240,59 +240,6 @@ func (m *Manager) NewSession(ctx context.Context, userID, username, email string
 	}, nil
 }
 
-func (m *Manager) ValidateAccessToken(ctx context.Context, tokenString string) (*Claims, error) {
-	token, err := jwt.ParseWithClaims(
-		tokenString,
-		&Claims{},
-		func(token *jwt.Token) (any, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodEd25519); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-			}
-			kid, ok := token.Header["kid"].(string)
-			if !ok {
-				return nil, errors.New("token missing kid header")
-			}
-
-			m.accessKeysMu.RLock()
-			defer m.accessKeysMu.RUnlock()
-			for _, k := range m.AccessTokenKeys {
-				if k.KeyID == kid {
-					return k.PrivateKey.Public().(ed25519.PublicKey), nil
-				}
-			}
-			return nil, fmt.Errorf("unknown key id: %s", kid)
-		},
-		jwt.WithValidMethods([]string{"EdDSA"}),
-		jwt.WithIssuer(m.Issuer),
-		jwt.WithAudience(m.Audience[0]),
-		jwt.WithExpirationRequired(),
-	)
-	if err != nil {
-		if errors.Is(err, jwt.ErrTokenExpired) {
-			return nil, ErrExpiredToken
-		}
-		return nil, fmt.Errorf("%w: %v", ErrInvalidToken, err)
-	}
-
-	claims, ok := token.Claims.(*Claims)
-	if !ok || !token.Valid {
-		return nil, ErrInvalidClaims
-	}
-	if claims.TokenType != "access" {
-		return nil, ErrInvalidTokenType
-	}
-
-	validAfter, err := m.TokenStore.GetUserTokensValidAfter(ctx, claims.UserID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user tokens valid-after: %w", err)
-	}
-	if !validAfter.IsZero() && !claims.IssuedAt.Time.After(validAfter) {
-		return nil, ErrTokenRevoked
-	}
-
-	return claims, nil
-}
-
 func (m *Manager) ValidateRefreshToken(ctx context.Context, tokenString string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(
 		tokenString,
