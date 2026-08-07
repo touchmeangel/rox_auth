@@ -241,6 +241,13 @@ func (m *Manager) NewSession(ctx context.Context, userID, username, email string
 }
 
 func (m *Manager) ValidateRefreshToken(ctx context.Context, tokenString string) (*Claims, error) {
+	opts := []jwt.ParserOption{}
+	for _, aud := range m.Audience {
+		opts = append(opts, jwt.WithAudience(aud))
+	}
+	opts = append(opts, jwt.WithValidMethods([]string{"EdDSA"}))
+	opts = append(opts, jwt.WithIssuer(m.Issuer))
+	opts = append(opts, jwt.WithExpirationRequired())
 	token, err := jwt.ParseWithClaims(
 		tokenString,
 		&Claims{},
@@ -262,10 +269,7 @@ func (m *Manager) ValidateRefreshToken(ctx context.Context, tokenString string) 
 			}
 			return nil, fmt.Errorf("unknown key id: %s", kid)
 		},
-		jwt.WithValidMethods([]string{"EdDSA"}),
-		jwt.WithIssuer(m.Issuer),
-		jwt.WithAudience(m.Audience[0]),
-		jwt.WithExpirationRequired(),
+		opts...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidToken, err)
