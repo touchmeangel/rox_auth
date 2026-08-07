@@ -10,19 +10,19 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func (s *Server) GetUserTokensValidAfter(ctx context.Context, req *authpb.GetUserTokensValidAfterRequest) (*authpb.GetUserTokensValidAfterResponse, error) {
-	userID := req.GetUserId()
+func (s *Server) GetSessionTokensValidAfter(ctx context.Context, req *authpb.GetSessionTokensValidAfterRequest) (*authpb.GetSessionTokensValidAfterResponse, error) {
+	sessionID := req.GetSessionId()
 
-	if userID == "" {
-		return nil, status.Error(codes.InvalidArgument, "user_id is required")
+	if sessionID == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
 
-	time, err := s.tokenManager.TokenStore.GetUserTokensValidAfter(ctx, userID)
+	time, err := s.tokenManager.TokenStore.GetSessionTokensValidAfter(ctx, sessionID)
 	if err != nil {
 		return nil, toStatus(err)
 	}
 
-	return &authpb.GetUserTokensValidAfterResponse{
+	return &authpb.GetSessionTokensValidAfterResponse{
 		ValidAfter: timestamppb.New(time),
 	}, nil
 }
