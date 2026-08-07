@@ -13,12 +13,10 @@ import (
 const (
 	sessionKeyPrefix      = "session:"
 	userSessionsKeyPrefix = "user_sessions:"
-	validAfterKeyPrefix   = "tokens_valid_after:"
 )
 
 func sessionKey(sessionID string) string   { return sessionKeyPrefix + sessionID }
 func userSessionsKey(userID string) string { return userSessionsKeyPrefix + userID }
-func validAfterKey(userID string) string   { return validAfterKeyPrefix + userID }
 
 type RedisTokenStore struct {
 	client *redis.Client
@@ -130,17 +128,23 @@ func (s *RedisTokenStore) ConsumeRefreshToken(ctx context.Context, sessionID, pr
 	}
 }
 
-// KEYS[1] = session key
+// KEYS[1] = session key, ARGV[1] = cutoff (unix millis)
 var revokeSessionScript = redis.NewScript(`
 if redis.call('EXISTS', KEYS[1]) == 0 then
 	return 0
 end
 redis.call('HSET', KEYS[1], 'revoked', '1')
+local current = redis.call('HGET', KEYS[1], 'valid_after')
+if current == false or tonumber(ARGV[1]) > tonumber(current) then
+	redis.call('HSET', KEYS[1], 'valid_after', ARGV[1])
+end
 return 1
 `)
 
 func (s *RedisTokenStore) RevokeSession(ctx context.Context, sessionID string) error {
-	n, err := revokeSessionScript.Run(ctx, s.client, []string{sessionKey(sessionID)}).Int()
+	n, err := revokeSessionScript.Run(ctx, s.client,
+		[]string{sessionKey(sessionID)}, time.Now().UnixMilli(),
+	).Int()
 	if err != nil {
 		return fmt.Errorf("revoke session: %w", err)
 	}
@@ -150,7 +154,8 @@ func (s *RedisTokenStore) RevokeSession(ctx context.Context, sessionID string) e
 	return nil
 }
 
-// KEYS[1] = user_sessions set key, ARGV[1] = session key prefix
+// KEYS[1] = user_sessions set key, ARGV[1] = session key prefix,
+// ARGV[2] = cutoff (unix millis)
 var revokeAllUserSessionsScript = redis.NewScript(`
 local ids = redis.call('SMEMBERS', KEYS[1])
 local revoked = {}
@@ -158,6 +163,10 @@ for _, id in ipairs(ids) do
 	local key = ARGV[1] .. id
 	if redis.call('EXISTS', key) == 1 then
 		redis.call('HSET', key, 'revoked', '1')
+		local current = redis.call('HGET', key, 'valid_after')
+		if current == false or tonumber(ARGV[2]) > tonumber(current) then
+			redis.call('HSET', key, 'valid_after', ARGV[2])
+		end
 		table.insert(revoked, id)
 	end
 end
@@ -177,7 +186,7 @@ return #revoked
 
 func (s *RedisTokenStore) RevokeAllUserSessions(ctx context.Context, userID string) error {
 	if _, err := revokeAllUserSessionsScript.Run(ctx, s.client,
-		[]string{userSessionsKey(userID)}, sessionKeyPrefix,
+		[]string{userSessionsKey(userID)}, sessionKeyPrefix, time.Now().UnixMilli(),
 	).Result(); err != nil {
 		return fmt.Errorf("revoke all user sessions: %w", err)
 	}
@@ -247,31 +256,17 @@ func parseSessionData(sessionID string, fields map[string]string) (*SessionData,
 	}, nil
 }
 
-var setTokensValidAfterScript = redis.NewScript(`
-local current = redis.call('GET', KEYS[1])
-if current == false or tonumber(ARGV[1]) > tonumber(current) then
-	redis.call('SET', KEYS[1], ARGV[1])
-	return 1
-end
-return 0
-`)
-
-func (s *RedisTokenStore) GetUserTokensValidAfter(ctx context.Context, userID string) (time.Time, error) {
-	v, err := s.client.Get(ctx, validAfterKey(userID)).Int64()
+func (s *RedisTokenStore) GetSessionTokensValidAfter(ctx context.Context, sessionID string) (time.Time, error) {
+	v, err := s.client.HGet(ctx, sessionKey(sessionID), "valid_after").Result()
 	if errors.Is(err, redis.Nil) {
 		return time.Time{}, nil
 	}
 	if err != nil {
-		return time.Time{}, fmt.Errorf("get user tokens valid-after: %w", err)
+		return time.Time{}, fmt.Errorf("get session tokens valid-after: %w", err)
 	}
-	return time.UnixMilli(v), nil
-}
-
-func (s *RedisTokenStore) SetUserTokensValidAfter(ctx context.Context, userID string, cutoff time.Time) error {
-	if _, err := setTokensValidAfterScript.Run(ctx, s.client,
-		[]string{validAfterKey(userID)}, cutoff.UnixMilli(),
-	).Result(); err != nil {
-		return fmt.Errorf("set user tokens valid-after: %w", err)
+	ms, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse session tokens valid-after: %w", err)
 	}
-	return nil
+	return time.UnixMilli(ms), nil
 }

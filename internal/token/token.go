@@ -320,9 +320,6 @@ func (m *Manager) RevokeSession(ctx context.Context, sessionID string) error {
 }
 
 func (m *Manager) RevokeAllUserSessions(ctx context.Context, userID string) error {
-	if err := m.TokenStore.SetUserTokensValidAfter(ctx, userID, time.Now()); err != nil {
-		return fmt.Errorf("failed to set tokens valid-after: %w", err)
-	}
 	return m.TokenStore.RevokeAllUserSessions(ctx, userID)
 }
 
